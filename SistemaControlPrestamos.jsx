@@ -56,6 +56,8 @@ const INIT = [
   { id: 7, n: "Petos de Entrenamiento", t: "Selección Fútbol Varones", s: 30 },
 ];
 const TALLERES = ["Selección Fútbol Varones", "Taller de Básquetbol", "Taller Vóleibol Damas", "Pilates & Flexibilidad", "Acondicionamiento Físico"];
+const MAX_INTENTOS = 3;
+const BLOQUEO_MS = 30000;
 const ROLES = ["Encargado de Bodega", "Monitor", "Coordinador"];
 const status = (i) => (i.baja ? "Baja" : i.s === 0 ? "Faltante" : i.s <= 3 ? "Bajo" : "Disponible");
 const Badge = ({ v }) => <span className={`badge ${v}`}>{v}</span>;
@@ -75,6 +77,9 @@ export default function SistemaControlPrestamos() {
   const [role, setRole] = useState(ROLES[0]);
   const [login, setLogin] = useState({ u: "", p: "" });
   const [loginErr, setLoginErr] = useState("");
+  const [intentos, setIntentos] = useState(0);
+  const [bloqueadoHasta, setBloqueadoHasta] = useState(null);
+  const [restanteSeg, setRestanteSeg] = useState(0);
   const [inv, setInv] = useState(() => readStored("scp-inventory", INIT, Array.isArray));
   const [q, setQ] = useState("");
   const [d, setD] = useState({ taller: TALLERES[0], monitor: "Felipe Torres", fecha: "2026-10-12", rut: "" });
@@ -92,6 +97,19 @@ export default function SistemaControlPrestamos() {
     }
   }, [inv, nro]);
 
+  useEffect(() => {
+    if (!bloqueadoHasta) return;
+    const tick = () => {
+      const ms = bloqueadoHasta - Date.now();
+      if (ms <= 0) { setBloqueadoHasta(null); setIntentos(0); setLoginErr(""); setRestanteSeg(0); return; }
+      setRestanteSeg(Math.ceil(ms / 1000));
+    };
+    tick();
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [bloqueadoHasta]);
+
+  const bloqueado = bloqueadoHasta !== null && restanteSeg > 0;
   const canLoan = role === ROLES[0];
   const get = (id) => inv.find((i) => i.id === id);
   const total = items.reduce((a, b) => a + b.qty, 0);
@@ -100,8 +118,19 @@ export default function SistemaControlPrestamos() {
   const reset = () => { setItems([]); setD({ ...d, rut: "" }); go("reg"); };
 
   const doLogin = () => {
-    if (login.u.trim() !== "bodega" || login.p !== "demo123") return setLoginErr("Credenciales incorrectas. Usa la cuenta de demostración indicada abajo.");
-    setLoginErr(""); go("inv");
+    if (bloqueado) return;
+    if (login.u.trim() !== "bodega" || login.p !== "demo123") {
+      const n = intentos + 1;
+      setIntentos(n);
+      if (n >= MAX_INTENTOS) {
+        setBloqueadoHasta(Date.now() + BLOQUEO_MS);
+        setLoginErr(`Demasiados intentos fallidos. Cuenta bloqueada por ${BLOQUEO_MS / 1000} segundos.`);
+      } else {
+        setLoginErr(`Credenciales incorrectas. Usa la cuenta de demostración indicada abajo. Intentos restantes: ${MAX_INTENTOS - n}.`);
+      }
+      return;
+    }
+    setIntentos(0); setBloqueadoHasta(null); setLoginErr(""); go("inv");
   };
   const addItem = () => {
     const qty = Number(sel.qty);
@@ -145,10 +174,10 @@ export default function SistemaControlPrestamos() {
           </div>
           <h1 style={{ textAlign: "center" }}>Iniciar Sesión</h1>
           <p className="sub" style={{ textAlign: "center" }}>Ingresa tus credenciales para acceder al sistema</p>
-          <div className="f"><label htmlFor="login-user">Usuario</label><input id="login-user" autoComplete="username" placeholder="bodega" value={login.u} onChange={(e) => setLogin({ ...login, u: e.target.value })} /></div>
-          <div className="f"><label htmlFor="login-password">Contraseña</label><input id="login-password" autoComplete="current-password" type="password" placeholder="Contraseña" value={login.p} onChange={(e) => setLogin({ ...login, p: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doLogin()} /></div>
+          <div className="f"><label htmlFor="login-user">Usuario</label><input id="login-user" autoComplete="username" placeholder="bodega" value={login.u} disabled={bloqueado} onChange={(e) => setLogin({ ...login, u: e.target.value })} /></div>
+          <div className="f"><label htmlFor="login-password">Contraseña</label><input id="login-password" autoComplete="current-password" type="password" placeholder="Contraseña" value={login.p} disabled={bloqueado} onChange={(e) => setLogin({ ...login, p: e.target.value })} onKeyDown={(e) => e.key === "Enter" && doLogin()} /></div>
           {loginErr && <div className="err">{loginErr}</div>}
-          <button className="btn" style={{ width: "100%" }} onClick={doLogin}>Iniciar Sesión</button>
+          <button className="btn" style={{ width: "100%" }} onClick={doLogin} disabled={bloqueado}>{bloqueado ? `Bloqueado (${restanteSeg}s)` : "Iniciar Sesión"}</button>
           <div className="note" style={{ textAlign: "center" }}>Acceso de demostración: <b>bodega</b> / <b>demo123</b></div>
           <p className="sub" style={{ textAlign: "center", margin: "18px 0 8px", fontSize: 11 }}>ACCESO SEGÚN ROL</p>
           <div className="chips">{ROLES.map((r) => (<button key={r} type="button" className={`chip ${role === r ? "on" : ""}`} aria-pressed={role === r} onClick={() => setRole(r)}>{r}</button>))}</div>
